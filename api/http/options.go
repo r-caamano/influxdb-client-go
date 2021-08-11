@@ -8,7 +8,10 @@ import (
 	"crypto/tls"
 	"net"
 	"net/http"
+	"strings"
 	"time"
+	"context"
+	"github.com/openziti/sdk-golang/ziti"
 )
 
 // Options holds http configuration properties for communicating with InfluxDB server
@@ -25,6 +28,15 @@ type Options struct {
 	httpRequestTimeout uint
 }
 
+type ZitiDialContext struct {
+	context ziti.Context
+}
+
+func (dc *ZitiDialContext) Dial(_ context.Context, _ string, addr string) (net.Conn, error) {
+	service := strings.Split(addr, ":")[0] // will always get passed host:port
+	return dc.context.Dial(service)
+}
+
 // HTTPClient returns the http.Client that is configured to be used
 // for HTTP requests. It will return the one that has been set using
 // SetHTTPClient or it will construct a default client using the
@@ -35,18 +47,12 @@ func (o *Options) HTTPClient() *http.Client {
 		panic("HTTPClient called after SetHTTPDoer")
 	}
 	if o.httpClient == nil {
+		zitiDialContext := ZitiDialContext{context: ziti.NewContext()}
+		zitiTransport := http.DefaultTransport.(*http.Transport).Clone() // copy default transport
+		zitiTransport.DialContext = zitiDialContext.Dial
 		o.httpClient = &http.Client{
 			Timeout: time.Second * time.Duration(o.HTTPRequestTimeout()),
-			Transport: &http.Transport{
-				DialContext: (&net.Dialer{
-					Timeout: 5 * time.Second,
-				}).DialContext,
-				TLSHandshakeTimeout: 5 * time.Second,
-				TLSClientConfig:     o.TLSConfig(),
-				MaxIdleConns:        100,
-				MaxIdleConnsPerHost: 100,
-				IdleConnTimeout:     90 * time.Second,
-			},
+			Transport: zitiTransport,
 		}
 		o.ownClient = true
 	}
